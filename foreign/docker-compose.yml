@@ -10,7 +10,7 @@ services:
       - ./xray-config.json:/etc/xray/config.json:ro
 
   rathole:
-    image: ghcr.io/rapiz1/rathole:v0.5.0
+    image: rapiz1/rathole:latest
     container_name: emergency_rathole_client
     restart: always
     network_mode: "host"

@@ -12,7 +12,7 @@ services:
       - ./certs:/etc/nginx/certs:ro
 
   rathole:
-    image: ghcr.io/rapiz1/rathole:v0.5.0
+    image: rapiz1/rathole:latest
     container_name: emergency_rathole_server
     restart: always
     network_mode: "host"

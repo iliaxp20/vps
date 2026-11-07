@@ -2,7 +2,8 @@
 """
 Emergency Relay VPN Deployer (Iran & Foreign Dual-Server Architecture)
 Designed for extreme censorship and national intranet (اینترنت ملی) situations.
-Reverse tunnel (Noise protocol) + Decoy Camouflage Corporate Website + VLESS-WS.
+100% Domestic mirror deployment on Iran server (mirror.iranserver.com & docker.iranserver.com).
+Zero external/foreign service dependencies for the Iran server.
 """
 
 import os
@@ -49,28 +50,55 @@ def exec_cmd(client, cmd, check_err=False):
         print(f"[-] Error running: {cmd}\n{err}")
     return code, out, err
 
-def setup_docker(client, is_iran=False):
-    print("[*] Checking Docker and Docker Compose...")
+def setup_iran_server_environment(client):
+    """
+    Ensures 100% domestic operations on Iran Server.
+    Uses mirror.iranserver.com for APT and docker.iranserver.com for Docker Hub.
+    ZERO foreign connections required!
+    """
+    print("[*] [ایران] اعمال میرورهای ۱۰۰٪ داخلی ایران‌سرور (mirror.iranserver.com)...")
+    
+    # Update APT to IranServer mirror (works on Ubuntu 20.04, 22.04, 24.04)
+    iran_apt_script = """
+if [ -f /etc/apt/sources.list ]; then
+    cp /etc/apt/sources.list /etc/apt/sources.list.bak 2>/dev/null || true
+    sed -i -E 's|https?://[a-zA-Z0-9.-]+/ubuntu/?|http://mirror.iranserver.com/ubuntu/|g' /etc/apt/sources.list
+fi
+if [ -f /etc/apt/sources.list.d/ubuntu.sources ]; then
+    cp /etc/apt/sources.list.d/ubuntu.sources /etc/apt/sources.list.d/ubuntu.sources.bak 2>/dev/null || true
+    sed -i -E 's|https?://[a-zA-Z0-9.-]+/ubuntu/?|http://mirror.iranserver.com/ubuntu/|g' /etc/apt/sources.list.d/ubuntu.sources
+fi
+"""
+    exec_cmd(client, iran_apt_script)
+
+    # Check Docker
     code, out, _ = exec_cmd(client, "docker --version && docker compose version")
     if code != 0:
-        print("[*] Docker not found. Installing Docker...")
-        exec_cmd(client, "curl -fsSL https://get.docker.com | sh", check_err=True)
+        print("[*] [ایران] نصب داکر از طریق مخازن داخلی ایران‌سرور...")
+        exec_cmd(client, "DEBIAN_FRONTEND=noninteractive apt-get update -y && DEBIAN_FRONTEND=noninteractive apt-get install -y docker.io docker-compose-v2 openssl")
         exec_cmd(client, "systemctl enable --now docker")
 
-    if is_iran:
-        print("[*] Configuring Iranian Docker registry mirrors to bypass sanctions & filtering...")
-        daemon_json = """{
+    # Configure Docker daemon with IranServer & ArvanCloud registry mirrors
+    print("[*] [ایران] تنظیم رجیستری میرورهای داخلی داکر (docker.iranserver.com)...")
+    daemon_json = """{
   "registry-mirrors": [
-    "https://docker.arvancloud.ir",
-    "https://docker.mwt.ir",
-    "https://docker.iranserver.com"
+    "https://docker.iranserver.com",
+    "https://docker.arvancloud.ir"
   ]
 }"""
-        sftp = client.open_sftp()
-        with sftp.file('/tmp/daemon.json', 'w') as f:
-            f.write(daemon_json)
-        sftp.close()
-        exec_cmd(client, "mkdir -p /etc/docker && cp /tmp/daemon.json /etc/docker/daemon.json && systemctl restart docker")
+    sftp = client.open_sftp()
+    with sftp.file('/tmp/daemon.json', 'w') as f:
+        f.write(daemon_json)
+    sftp.close()
+    exec_cmd(client, "mkdir -p /etc/docker && cp /tmp/daemon.json /etc/docker/daemon.json && systemctl restart docker")
+
+def setup_foreign_server_environment(client):
+    print("[*] [خارج] بررسی داکر و آماده‌سازی مخازن سرور خارج...")
+    code, out, _ = exec_cmd(client, "docker --version && docker compose version")
+    if code != 0:
+        print("[*] [خارج] در حال نصب داکر...")
+        exec_cmd(client, "curl -fsSL https://get.docker.com | sh", check_err=True)
+        exec_cmd(client, "systemctl enable --now docker")
 
 def upload_directory(sftp, local_dir, remote_dir):
     try:
@@ -86,12 +114,42 @@ def upload_directory(sftp, local_dir, remote_dir):
         else:
             sftp.put(l_path, r_path)
 
+def sync_images_if_needed(client_foreign, client_iran):
+    """
+    Fail-safe: In case Iran server cannot pull an image from domestic cache
+    during total international isolation, pull on Foreign and pipe to Iran.
+    """
+    print("[*] تست و اعتبارسنجی ایمیج‌ها روی سرور ایران...")
+    code, _, _ = exec_cmd(client_iran, "docker pull nginx:alpine && docker pull rapiz1/rathole:latest")
+    if code != 0:
+        print("[!] میرور ایران به اینترنت دسترسی ندارد. انتقال مستقیم ایمیج‌ها از سرور خارج به سرور ایران...")
+        exec_cmd(client_foreign, "docker pull nginx:alpine && docker pull rapiz1/rathole:latest")
+        exec_cmd(client_foreign, "docker save nginx:alpine rapiz1/rathole:latest | gzip > /tmp/images.tar.gz")
+        
+        # Stream via SFTP
+        with tempfile.TemporaryDirectory() as tmpdir:
+            local_tar = Path(tmpdir) / "images.tar.gz"
+            print("[*] دریافت ایمیج‌ها از سرور خارج...")
+            sftp_f = client_foreign.open_sftp()
+            sftp_f.get("/tmp/images.tar.gz", str(local_tar))
+            sftp_f.close()
+
+            print("[*] انتقال ایمیج‌ها به سرور ایران...")
+            sftp_i = client_iran.open_sftp()
+            sftp_i.put(str(local_tar), "/tmp/images.tar.gz")
+            sftp_i.close()
+
+            print("[*] بارگذاری ایمیج‌ها در داکر ایران...")
+            exec_cmd(client_iran, "docker load -i /tmp/images.tar.gz && rm -f /tmp/images.tar.gz")
+    else:
+        print("[+] تمام ایمیج‌ها با موفقیت از میرور داخلی docker.iranserver.com دریافت شدند.")
+
 def main():
     clear_screen()
-    print("=" * 65)
-    print("   EMERGENCY RELAY VPN AUTO-DEPLOYER (ANTI-FILTERING & WAR-MODE)   ")
-    print("   معماری تانل معکوس سرور ایران به خارج + سایت استتار شرکتی   ")
-    print("=" * 65)
+    print("=" * 68)
+    print("   EMERGENCY RELAY VPN AUTO-DEPLOYER (WAR-MODE & 100% DOMESTIC)    ")
+    print("   استقرار سرور ایران بدون نیاز به اینترنت بین‌الملل (با میرور ایران‌سرور)  ")
+    print("=" * 68)
     print()
 
     # 1. Inputs
@@ -134,15 +192,15 @@ def main():
     if not client_iran:
         sys.exit(1)
 
-    # 3. Setup Docker
-    print("\n--- [آماده‌سازی داکر روی هر دو سرور] ---")
-    setup_docker(client_foreign, is_iran=False)
-    setup_docker(client_iran, is_iran=True)
+    # 3. Setup Environments
+    print("\n--- [آماده‌سازی مخازن و داکر روی سرورها] ---")
+    setup_foreign_server_environment(client_foreign)
+    setup_iran_server_environment(client_iran)
+    sync_images_if_needed(client_foreign, client_iran)
 
     # 4. Generate & Deploy Foreign Configs
     print("\n--- [استقرار سرویس‌ها روی سرور خارج] ---")
     with tempfile.TemporaryDirectory() as tmpdir:
-        # Read templates
         xray_cfg = (BASE_DIR / "foreign" / "xray-config.json").read_text(encoding="utf-8")
         xray_cfg = xray_cfg.replace("CLIENT_UUID", client_uuid).replace("WS_SECRET_PATH", ws_secret_path)
 
@@ -167,9 +225,8 @@ def main():
 
     # 5. Generate & Deploy Iran Configs
     print("\n--- [استقرار سرویس‌ها و سایت استتار روی سرور ایران] ---")
-    # Generate self-signed SSL on Iran if needed
     exec_cmd(client_iran, "mkdir -p /opt/emergency-tunnel/certs")
-    print("[*] Generating high-grade TLS certificate on Iran server...")
+    print("[*] [ایران] تولید گواهی TLS داخلی...")
     exec_cmd(client_iran, f"openssl req -x509 -nodes -days 3650 -newkey rsa:2048 -keyout /opt/emergency-tunnel/certs/privkey.pem -out /opt/emergency-tunnel/certs/fullchain.pem -subj '/CN={sni_host}'")
 
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -210,16 +267,16 @@ def main():
     client_foreign.close()
     client_iran.close()
 
-    print("\n" + "=" * 65)
+    print("\n" + "=" * 68)
     print("   [+] راه‌اندازی با موفقیت کامل انجام شد! (DEPLOYED SUCCESSFULLY)   ")
-    print("=" * 65)
+    print("=" * 68)
     print("\nلینک کانفیگ کلاینت شما (جهت کپی در v2rayNG / V2rayN / Nekobox):")
-    print("-" * 65)
+    print("-" * 68)
     print(vless_link)
-    print("-" * 65)
+    print("-" * 68)
     print(f"\nاطلاعات کامل در فایل ذخیره شد:\n{out_file}")
-    print("\nوضعیت استتار: اگر آدرس https://{iran_ip} را در مرورگر باز کنید، وب‌سایت شرکتی نمایش داده خواهد شد.")
-    print("=" * 65 + "\n")
+    print(f"\nوضعیت استتار: اگر آدرس https://{iran_ip} را در مرورگر باز کنید، وب‌سایت شرکتی نمایش داده خواهد شد.")
+    print("=" * 68 + "\n")
 
 if __name__ == "__main__":
     main()
