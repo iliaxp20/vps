@@ -1,0 +1,21 @@
+version: '3.8'
+
+services:
+  nginx:
+    image: nginx:alpine
+    container_name: emergency_nginx
+    restart: always
+    network_mode: "host"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./decoy-site:/usr/share/nginx/html:ro
+      - ./certs:/etc/nginx/certs:ro
+
+  rathole:
+    image: ghcr.io/rapiz1/rathole:v0.5.0
+    container_name: emergency_rathole_server
+    restart: always
+    network_mode: "host"
+    volumes:
+      - ./rathole-server.toml:/app/config.toml:ro
+    command: ["--server", "/app/config.toml"]

@@ -1,0 +1,19 @@
+version: '3.8'
+
+services:
+  xray:
+    image: teddysun/xray:latest
+    container_name: emergency_xray_core
+    restart: always
+    network_mode: "host"
+    volumes:
+      - ./xray-config.json:/etc/xray/config.json:ro
+
+  rathole:
+    image: ghcr.io/rapiz1/rathole:v0.5.0
+    container_name: emergency_rathole_client
+    restart: always
+    network_mode: "host"
+    volumes:
+      - ./rathole-client.toml:/app/config.toml:ro
+    command: ["--client", "/app/config.toml"]

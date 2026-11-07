@@ -1,0 +1,12 @@
+# Rathole Server on Iran
+[server]
+bind_addr = "0.0.0.0:TUNNEL_PORT"
+default_token = "TUNNEL_SECRET_TOKEN"
+
+[server.transport]
+type = "noise"
+
+[server.services.vless_ws]
+bind_addr = "127.0.0.1:10001"
+type = "tcp"
+nodelay = true

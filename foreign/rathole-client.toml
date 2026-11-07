@@ -1,0 +1,12 @@
+# Rathole Client on Foreign (Initiates reverse connection to Iran)
+[client]
+remote_addr = "IRAN_IP:TUNNEL_PORT"
+default_token = "TUNNEL_SECRET_TOKEN"
+
+[client.transport]
+type = "noise"
+
+[client.services.vless_ws]
+local_addr = "127.0.0.1:10000"
+type = "tcp"
+nodelay = true

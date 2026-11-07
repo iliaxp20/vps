@@ -1,0 +1,8 @@
+# Private generated credentials & secrets
+client-config.txt
+*.pem
+certs/
+__pycache__/
+*.pyc
+.DS_Store
+Thumbs.db
